@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GEODASH NEON</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@900&display=swap');
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Orbitron', sans-serif; user-select: none; }
+        #wrapper { position: relative; width: 100vw; height: 100vh; }
+        canvas { display: block; filter: drop-shadow(0 0 10px rgba(255,255,255,0.1)); }
+        
+        /* UI Overlays */
+        .overlay {
+            position: absolute; inset: 0; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; z-index: 100;
+            background: radial-gradient(circle, rgba(20,20,30,0.8) 0%, rgba(0,0,0,0.95) 100%);
+            transition: opacity 0.4s;
+        }
+        .hud {
+            position: absolute; top: 0; width: 100%; display: flex;
+            justify-content: space-between; padding: 25px 50px; box-sizing: border-box;
+            color: #fff; text-shadow: 0 0 10px rgba(0,255,136,0.5); font-size: 1.2rem;
+            pointer-events: none; z-index: 50;
+        }
+        .btn {
+            background: none; border: 4px solid #00ff88; color: #00ff88;
+            padding: 20px 60px; font-family: 'Orbitron'; font-size: 2rem;
+            cursor: pointer; border-radius: 4px; transition: 0.2s;
+            text-transform: uppercase; letter-spacing: 5px;
+        }
+        .btn:hover { background: #00ff88; color: #000; box-shadow: 0 0 50px #00ff88; }
+        .hidden { opacity: 0; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+    <div id="wrapper">
+        <div id="hud" class="hud" style="display:none;">
+            <div>LVL: <span id="lvl">1</span></div>
+            <div id="lvl-name">STEREOMADNESS</div>
+            <div><span id="prog">0</span>%</div>
+        </div>
+
+        <div id="menu" class="overlay">
+            <h1 style="color:#fff; font-size: 5rem; margin-bottom: 0; text-shadow: 0 0 20px #00ff88;">GEODASH</h1>
+            <p style="color:#00ff88; margin-top: 0; letter-spacing: 10px; margin-bottom: 50px;">NEON VERSION</p>
+            <p style="color:#00ff88; margin-top: 0; letter-spacing: 10px; margin-bottom: 50px;">By wolfvox co.</p>
+            <button class="btn" onclick="startApp()">Play</button>
+        </div>
+
+        <canvas id="game"></canvas>
+    </div>
+
+<script>
+/** @type {HTMLCanvasElement} */
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const menu = document.getElementById('menu');
+const hud = document.getElementById('hud');
+
+let w, h, groundY;
+function resize() {
+    w = canvas.width = window.innerWidth;
+    h = canvas.height = window.innerHeight;
+    groundY = h - 150;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// --- GAME STATE ---
+const LEVELS = [
+    { name: "NEON START", color: "#00ff88", bg: "#001a0d", speed: 8 },
+    { name: "AZURE DRIFT", color: "#00ccff", bg: "#000d1a", speed: 9.5 },
+    { name: "VIOLET VIBE", color: "#cc00ff", bg: "#11001a", speed: 11 },
+    { name: "SOLAR FLARE", color: "#ff8800", bg: "#1a0d00", speed: 12.5 },
+    { name: "CRITICAL ERROR", color: "#ff0044", bg: "#1a0005", speed: 14 }
+];
+
+let currentLevel = 0;
+let isPlaying = false;
+let obstacles = [];
+let particles = [];
+let progress = 0;
+let levelWidth = 15000; // Total length of level
+
+const player = {
+    x: 0, y: 0, size: 50,
+    vy: 0, rotation: 0,
+    jump: -16, gravity: 0.9,
+    grounded: false,
+    reset() {
+        this.x = 200;
+        this.y = groundY - this.size;
+        this.vy = 0;
+        this.rotation = 0;
+    }
+};
+
+function buildLevel(idx) {
+    obstacles = [];
+    const speed = LEVELS[idx].speed;
+    // Guaranteed spacing for playability (minimum 400px between hazards)
+    for (let x = 1000; x < levelWidth; x += (400 + Math.random() * 600)) {
+        let r = Math.random();
+        if (r < 0.6) {
+            obstacles.push({ x, y: groundY, type: 'spike', w: 45, h: 50 });
+        } else if (r < 0.85) {
+            obstacles.push({ x, y: groundY - 100, type: 'block', w: 60, h: 60 });
+        } else {
+            obstacles.push({ x, y: groundY, type: 'orb', w: 40, h: 40 });
+        }
+    }
+}
+
+function startApp() {
+    menu.classList.add('hidden');
+    hud.style.display = 'flex';
+    currentLevel = 0;
+    loadLevel(0);
+    isPlaying = true;
+    requestAnimationFrame(loop);
+}
+
+function loadLevel(idx) {
+    player.reset();
+    buildLevel(idx);
+    document.getElementById('lvl').innerText = idx + 1;
+    document.getElementById('lvl-name').innerText = LEVELS[idx].name;
+}
+
+function loop() {
+    if (!isPlaying) return;
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+function update() {
+    const config = LEVELS[currentLevel];
+    
+    // Physics
+    player.vy += player.gravity;
+    player.y += player.vy;
+
+    if (player.y + player.size > groundY) {
+        player.y = groundY - player.size;
+        player.vy = 0;
+        player.grounded = true;
+        player.rotation = Math.round(player.rotation / 90) * 90;
+    } else {
+        player.grounded = false;
+        player.rotation += 5;
+    }
+
+    // Scroll Obstacles
+    obstacles.forEach(o => {
+        o.x -= config.speed;
+        
+        // Collision (AABB with small inset for fairness)
+        const inset = 8;
+        if (player.x + player.size - inset > o.x && 
+            player.x + inset < o.x + o.w &&
+            player.y + player.size - inset > (o.type === 'spike' ? o.y - o.h : o.y) &&
+            player.y + inset < (o.type === 'spike' ? o.y : o.y + o.h)) {
+            
+            if (o.type === 'orb') {
+                player.vy = player.jump * 1.2; // Auto-jump orb
+            } else {
+                die();
+            }
+        }
+    });
+
+    // Progress
+    progress = Math.min(100, Math.floor((1 - (obstacles[obstacles.length-1].x / levelWidth)) * 100));
+    document.getElementById('prog').innerText = Math.max(0, progress);
+
+    if (progress >= 100) nextLevel();
+}
+
+function draw() {
+    const config = LEVELS[currentLevel];
+    
+    // BG
+    ctx.fillStyle = config.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    // Grid Floor
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    for(let i=0; i<w; i+=50) {
+        ctx.beginPath();
+        ctx.moveTo(i, groundY);
+        ctx.lineTo(i, h);
+        ctx.stroke();
+    }
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, groundY, w, 150);
+    ctx.strokeStyle = config.color;
+    ctx.lineWidth = 4;
+    ctx.strokeRect(-10, groundY, w+20, 2);
+
+    // Obstacles
+    obstacles.forEach(o => {
+        ctx.fillStyle = (o.type === 'spike') ? "#fff" : config.color;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = config.color;
+        
+        if (o.type === 'spike') {
+            ctx.beginPath();
+            ctx.moveTo(o.x, o.y);
+            ctx.lineTo(o.x + o.w/2, o.y - o.h);
+            ctx.lineTo(o.x + o.w, o.y);
+            ctx.fill();
+        } else if (o.type === 'block') {
+            ctx.fillRect(o.x, o.y, o.w, o.h);
+        } else {
+            ctx.beginPath();
+            ctx.arc(o.x + 20, o.y - 20, 15, 0, Math.PI*2);
+            ctx.fill();
+        }
+    });
+
+    // Player
+    ctx.save();
+    ctx.translate(player.x + player.size/2, player.y + player.size/2);
+    ctx.rotate(player.rotation * Math.PI / 180);
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = config.color;
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(-player.size/2, -player.size/2, player.size, player.size);
+    ctx.strokeStyle = config.color;
+    ctx.lineWidth = 5;
+    ctx.strokeRect(-player.size/2 + 5, -player.size/2 + 5, player.size - 10, player.size - 10);
+    ctx.restore();
+    ctx.shadowBlur = 0;
+}
+
+function die() {
+    loadLevel(currentLevel);
+}
+
+function nextLevel() {
+    if (currentLevel < LEVELS.length - 1) {
+        currentLevel++;
+        loadLevel(currentLevel);
+    } else {
+        isPlaying = false;
+        menu.classList.remove('hidden');
+        menu.innerHTML = `<h1>WINNER</h1><button class="btn" onclick="location.reload()">Replay</button>`;
+    }
+}
+
+// Controls
+const jumpAction = () => { if(player.grounded) player.vy = player.jump; };
+window.addEventListener('keydown', e => { if(e.code === 'Space') jumpAction(); });
+window.addEventListener('touchstart', (e) => { e.preventDefault(); jumpAction(); }, {passive: false});
+window.addEventListener('mousedown', jumpAction);
+
+</script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
